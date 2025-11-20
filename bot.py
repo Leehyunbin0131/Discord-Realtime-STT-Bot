@@ -41,13 +41,13 @@ class STTSink(AudioSink):
             return
             
         try:
-            # Fast conversion using numpy
+            # Efficiently convert PCM data using numpy
             audio_data = np.frombuffer(data.pcm, dtype=np.int16)
             audio_data = audio_data.reshape(-1, 2)
             mono_data = audio_data.mean(axis=1).astype(np.int16)
-            resampled_data = mono_data[::3] # 48k -> 16k
+            resampled_data = mono_data[::3] # Downsample 48k -> 16k
             
-            # Put into Multiprocessing Queue
+            # Offload to the STT process
             audio_queue.put((user.id, resampled_data.tobytes()))
             
         except Exception as e:
@@ -66,7 +66,7 @@ async def process_results():
     import json
     while True:
         try:
-            # Non-blocking check
+            # Check for new transcriptions without blocking
             if result_queue and not result_queue.empty():
                 result = result_queue.get()
                 print(json.dumps(result, ensure_ascii=False))
@@ -110,17 +110,18 @@ async def leave(ctx):
         await ctx.send("I am not in a voice channel.")
 
 if __name__ == "__main__":
-    # Multiprocessing Support for Windows
+    # Multiprocessing Support for Windows (Required)
     multiprocessing.freeze_support()
     
-    # Initialize Queues
+    # IPC Queues for process communication
     audio_queue = multiprocessing.Queue()
     result_queue = multiprocessing.Queue()
     command_queue = multiprocessing.Queue()
     
-    # Start STT Process
+    # Spawn the heavy STT logic in a separate process
+    # This keeps the main bot loop responsive
     stt_process = multiprocessing.Process(target=run_stt_process, args=(audio_queue, result_queue, command_queue))
-    stt_process.daemon = True # Ensure it dies if main process dies
+    stt_process.daemon = True # Auto-kill when main process exits
     stt_process.start()
     
     if not TOKEN:

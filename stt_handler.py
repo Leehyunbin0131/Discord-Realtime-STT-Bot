@@ -9,12 +9,16 @@ import config
 
 def run_stt_process(audio_queue, result_queue, command_queue):
     """
-    This function runs in a separate process.
-    It handles VAD, buffering, and transcription.
+    Standalone process for Speech-to-Text.
+    Handles VAD (Voice Activity Detection), Audio Buffering, and Transcription.
+    Running this isolated prevents the Discord bot from freezing during heavy inference.
     """
     print(f"STT Process started. PID: {os.getpid()}")
     
-    # 1. Load Models (MUST be done inside the process)
+    print(f"STT Process started. PID: {os.getpid()}")
+    
+    # --- Model Initialization ---
+    # Models must be loaded within this process to avoid CUDA context issues with multiprocessing.
     print("Loading Faster-Whisper model...")
     try:
         from faster_whisper import WhisperModel
@@ -27,7 +31,7 @@ def run_stt_process(audio_queue, result_queue, command_queue):
 
     print("Loading Silero VAD...")
     try:
-        # Load Silero VAD from torch hub
+        # Silero VAD is highly optimized for speech detection
         vad_model, utils = torch.hub.load(repo_or_dir=config.VAD_REPO_OR_DIR,
                                           model=config.VAD_MODEL,
                                           force_reload=False,
@@ -38,13 +42,13 @@ def run_stt_process(audio_queue, result_queue, command_queue):
         print(f"Error loading Silero VAD: {e}")
         return
 
-    # 2. State Management
-    user_buffers = {} # user_id -> bytearray (incoming raw stream)
-    user_speech_buffers = {} # user_id -> bytearray (accumulated speech)
-    user_ring_buffers = {} # user_id -> deque (pre-speech context)
-    user_last_activity = {} # user_id -> timestamp
+    # --- State Management ---
+    user_buffers = {}       # Incoming raw audio stream
+    user_speech_buffers = {} # Accumulated speech segments
+    user_ring_buffers = {}   # Pre-speech context (Ring Buffer)
+    user_last_activity = {}  # Timestamp for cleanup
     
-    # VAD Iterator per user
+    # VAD State per user
     user_vad_iterators = {} 
 
     print("STT Process Ready.")
@@ -87,12 +91,12 @@ def run_stt_process(audio_queue, result_queue, command_queue):
             
             user_buffers[user_id].extend(pcm_data)
             
-            # Process in chunks
+            # Process audio in chunks of 512 samples (32ms)
             while len(user_buffers[user_id]) >= config.FRAME_SIZE_BYTES:
                 frame = user_buffers[user_id][:config.FRAME_SIZE_BYTES]
                 del user_buffers[user_id][:config.FRAME_SIZE_BYTES]
                 
-                # Convert frame to tensor for Silero
+                # Prepare frame for Silero (float32, normalized)
                 frame_np = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
                 frame_tensor = torch.from_numpy(frame_np)
                 
@@ -100,13 +104,13 @@ def run_stt_process(audio_queue, result_queue, command_queue):
                 speech_dict = user_vad_iterators[user_id](frame_tensor, return_seconds=True)
                 
                 is_speech = False
-                # Check current state
+                # Check if VAD triggered
                 if user_vad_iterators[user_id].triggered:
                     is_speech = True
                 
-                # Logic:
                 if is_speech:
-                    # If we just started speaking (buffer empty), add context
+                    # Speech detected.
+                    # If this is the start of a new speech segment, prepend the ring buffer context.
                     if len(user_speech_buffers[user_id]) == 0:
                          for prev_frame in user_ring_buffers[user_id]:
                              user_speech_buffers[user_id].extend(prev_frame)
@@ -114,16 +118,15 @@ def run_stt_process(audio_queue, result_queue, command_queue):
                     
                     user_speech_buffers[user_id].extend(frame)
                 else:
-                    # Not speaking
+                    # Silence detected.
                     if len(user_speech_buffers[user_id]) > 0:
-                        # Transcribe!
+                        # End of speech segment -> Transcribe
                         audio_to_transcribe = user_speech_buffers[user_id][:]
                         user_speech_buffers[user_id] = bytearray()
                         
-                        # Transcribe function
                         transcribe_and_send(model, user_id, audio_to_transcribe, result_queue)
                     
-                    # Add to ring buffer
+                    # Keep recent frames in ring buffer for context
                     user_ring_buffers[user_id].append(frame)
 
         except queue.Empty:
