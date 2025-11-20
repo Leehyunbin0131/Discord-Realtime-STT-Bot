@@ -18,7 +18,6 @@ def run_stt_process(audio_queue, result_queue, command_queue):
     try:
         from faster_whisper import WhisperModel
         # Use 'large-v3-turbo' as requested previously, or fallback to base if too heavy
-        # User previously changed to "deepdml/faster-whisper-large-v3-turbo-ct2"
         model_id = "deepdml/faster-whisper-large-v3-turbo-ct2"
         model = WhisperModel(model_id, device="cuda", compute_type="float16")
         print("Faster-Whisper loaded on GPU.")
@@ -30,7 +29,6 @@ def run_stt_process(audio_queue, result_queue, command_queue):
     print("Loading Silero VAD...")
     try:
         # Load Silero VAD from torch hub
-        # We use the 'silero_vad' model from snakers4/silero-vad
         vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
                                           model='silero_vad',
                                           force_reload=False,
@@ -115,16 +113,6 @@ def run_stt_process(audio_queue, result_queue, command_queue):
                 # VADIterator handles state and thresholding internally
                 speech_dict = user_vad_iterators[user_id](frame_tensor, return_seconds=True)
                 
-                # speech_dict can be None, or contain 'start', 'end' keys
-                # But VADIterator usually returns None until it detects something?
-                # Wait, VADIterator usage:
-                # speech_prob = model(frame_tensor, 16000).item()
-                # But we used utils.VADIterator. Let's stick to the iterator.
-                
-                # Actually, VADIterator returns a dict ONLY when state changes (start/end).
-                # If it returns nothing, we need to know if we are currently speaking.
-                # We can check `vad_iterator.triggered`.
-                
                 is_speech = False
                 if speech_dict:
                     if 'start' in speech_dict:
@@ -150,10 +138,6 @@ def run_stt_process(audio_queue, result_queue, command_queue):
                 else:
                     # Not speaking
                     if len(user_speech_buffers[user_id]) > 0:
-                        # We were speaking, now stopped.
-                        # Silero VADIterator handles "min_silence_duration" internally before untriggering.
-                        # So if .triggered becomes False, it means speech has officially ended.
-                        
                         # Transcribe!
                         audio_to_transcribe = user_speech_buffers[user_id][:]
                         user_speech_buffers[user_id] = bytearray()
