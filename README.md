@@ -1,4 +1,4 @@
-# 🎙️ Discord Real-time STT Bot (High Performance)
+# 🎙️ 2025 Discord Real-time STT Bot (High Performance)
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![Discord.py](https://img.shields.io/badge/Discord.py-2.0%2B-5865F2?style=for-the-badge&logo=discord&logoColor=white)
